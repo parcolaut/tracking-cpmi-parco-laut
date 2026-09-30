@@ -742,8 +742,19 @@ async function refreshRecords() {
     const url = API_URL + '?username=' + encodeURIComponent(currentUser.username) + '&password=' + encodeURIComponent(currentUser.password);
     const res = await fetch(url);
     const json = await res.json();
-    if (Array.isArray(json)) records = json;
-  } catch (e) { /* diam-diam gagal, coba lagi nanti saat kirim pesan */ }
+    records = Array.isArray(json) ? json : [];
+
+    // Daftar CPMI kosong biasanya bukan karena aplikasi rusak, tapi karena hak akses
+    // akun belum diatur (kolom "cabangScope" di daftar akun masih kosong). Beri tahu
+    // supaya staf tidak bingung menyangka aplikasinya error.
+    if (records.length === 0) {
+      addBotBubble('⚠ Daftar CPMI kosong. Kemungkinan akun ini belum diatur cabangnya. ' +
+        'Minta admin mengisi kolom <b>cabangScope</b> di daftar akun (isi nama cabang, atau <b>SEMUA</b> untuk semua cabang).', 'err');
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function addUserBubble(text) {
