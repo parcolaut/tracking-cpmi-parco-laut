@@ -217,6 +217,26 @@
   .btn-simpan:active { transform: translateY(1px) scale(.985); box-shadow: 0 5px 12px -6px rgba(18,58,95,.45); }
   .reset-link { text-align: center; font-size: 11px; color: var(--muted); text-decoration: underline; margin-top: 8px; cursor: pointer; }
   #statusMsg { text-align: center; font-size: 11px; color: var(--muted); padding: 4px; }
+
+  /* ===== Overlay loading: muncul saat login / menyimpan supaya jelas sedang diproses ===== */
+  #loadOverlay {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: rgba(12, 32, 54, .55); backdrop-filter: blur(2px);
+    align-items: center; justify-content: center;
+  }
+  #loadOverlay.show { display: flex; }
+  #loadOverlay .load-box {
+    background: #fff; border-radius: 18px; padding: 22px 26px; text-align: center;
+    box-shadow: 0 24px 60px -18px rgba(6,20,36,.55); min-width: 170px;
+  }
+  #loadOverlay .ring {
+    width: 52px; height: 52px; margin: 0 auto 12px; border-radius: 50%;
+    border: 5px solid #e3eef8; border-top-color: #3382c9; border-right-color: #52a3e0;
+    animation: loadspin .8s linear infinite;
+  }
+  #loadOverlay .load-text { font-size: 13.5px; font-weight: 700; color: #163a5c; }
+  #loadOverlay .load-sub { font-size: 11px; color: #6a8099; margin-top: 3px; }
+  @keyframes loadspin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -428,7 +448,7 @@ let financeRecords = []; // daftar transaksi keuangan
 const CATEGORY_META = {
   MCU:          { label: 'MCU',          requiresCpmi: true,  tipe: 'kredit', default: 550000, companions: [] },
   MCUUlang:     { label: 'MCU Ulang',    requiresCpmi: true,  tipe: 'kredit', default: 550000, companions: [], skipDupCheck: true },
-  Paspor:       { label: 'Paspor',       requiresCpmi: true,  tipe: 'kredit', default: 650000, companions: [{ label: 'Transportasi', amount: 50000 }, { label: 'Konsumsi', amount: 50000 }] },
+  Paspor:       { label: 'Paspor',       requiresCpmi: true, multiCpmi: true, tipe: 'kredit', default: 650000, companions: [{ label: 'Transportasi', amount: 50000 }, { label: 'Konsumsi', amount: 50000 }] },
   RekomID:      { label: 'Rekom ID',     requiresCpmi: true, multiCpmi: true, noCost: true, tipe: 'kredit', default: null,   companions: [{ label: 'Transportasi', amount: 50000 }, { label: 'Konsumsi', amount: 50000 }] },
   OPP:          { label: 'OPP',          requiresCpmi: true, multiCpmi: true, tipe: 'kredit', default: 100000, companions: [] },
   BPJS:         { label: 'BPJS',         requiresCpmi: true,  tipe: 'kredit', default: 37500,  companions: [] },
@@ -485,6 +505,7 @@ async function doLogin() {
   }
   btnText.textContent = 'Memeriksa...';
   btn.disabled = true;
+  showLoading('Memeriksa login...');
   try {
     const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action: 'login', username, password }) });
     const json = await res.json();
@@ -492,6 +513,7 @@ async function doLogin() {
       currentUser = { username, password };
       // Demi keamanan (ini aplikasi keuangan): sesi TIDAK disimpan permanen di HP.
       // Setiap kali aplikasi dibuka ulang / di-refresh, wajib login lagi dari awal.
+      hideLoading();
       showMain();
     } else {
       document.getElementById('loginError').textContent = 'Username atau password salah.';
@@ -499,6 +521,7 @@ async function doLogin() {
   } catch (e) {
     document.getElementById('loginError').textContent = 'Gagal terhubung ke server.';
   }
+  hideLoading();
   btnText.textContent = 'Login';
   btn.disabled = false;
 }
@@ -515,6 +538,26 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
 function fmtRupiah(n) {
   const num = Number(n) || 0;
   return 'Rp ' + num.toLocaleString('id-ID');
+}
+
+// Mengubah teks nominal menjadi angka. Mendukung cara penulisan yang biasa dipakai:
+//   "50.000" / "50000" / "Rp 50.000"  -> 50000  (titik/koma/spasi dianggap pemisah ribuan)
+//   "(50.000)" atau "(50000)"         -> -50000 (tanda kurung = minus, gaya akuntansi)
+//   "-50000"                          -> -50000
+// Dipakai supaya minus/defisit bulan lalu BISA ditulis dalam kurung (sebelumnya
+// kolom nominal menolak tanda kurung sehingga "ketika diketik tidak muncul").
+// Mengembalikan NaN kalau benar-benar kosong / tidak ada angka.
+function parseNominal(raw) {
+  if (raw === null || raw === undefined) return NaN;
+  let s = String(raw).trim();
+  if (!s) return NaN;
+  let negatif = false;
+  if (/^\(.*\)$/.test(s)) { negatif = true; s = s.slice(1, -1); }   // (123) -> minus
+  if (/^-/.test(s)) { negatif = true; s = s.replace(/^-/, ''); }     // -123  -> minus
+  const digits = s.replace(/[^\d]/g, '');                            // buang pemisah ribuan dll
+  if (!digits) return NaN;
+  const n = Number(digits);
+  return negatif ? -n : n;
 }
 function fmtTanggalIndo(iso) {
   if (!iso) return '-';
@@ -822,8 +865,19 @@ function tampilkanLineItems(key) {
       };
     });
   } else if (meta.multiCpmi && cpmiTerpilihList.length) {
-    items = cpmiTerpilihList.map(c => ({ label: `${meta.label} - ${c.nama}`, amount: meta.default, freeText: false, cpmi: c, wajib: true }));
-    items = items.concat(meta.companions.map(c => ({ label: c.label, amount: c.amount, freeText: false, cpmi: null, wajib: false })));
+    // Rekom ID / Paspor / OPP untuk >1 orang di hari yang sama:
+    // - satu baris nominal per CPMI untuk biaya utama, TAPI TIDAK wajib -- boleh dikosongkan
+    //   untuk CPMI ke-2/ke-3 (biayanya ditanggung bersama). CPMI yang dikosongkan tetap
+    //   tercatat otomatis (jejak tersembunyi) supaya namanya tetap muncul di laporan.
+    // - Transport + Konsumsi cukup SATU kali (biaya tetap 50.000 + 50.000), bukan dikali
+    //   jumlah orang, dan keterangannya mencantumkan semua nama CPMI yang ikut.
+    const namaGabungan = cpmiTerpilihList.map(c => `${c.noreg || 'tanpa noreg'} ${c.nama}`).join(', ');
+    items = cpmiTerpilihList.map(c => ({ label: `${meta.label} - ${c.nama}`, amount: meta.default, freeText: false, cpmi: c, wajib: false }));
+    items = items.concat(meta.companions.map(c => {
+      const isTransport = c.label.toLowerCase().includes('transport');
+      return { label: c.label, amount: c.amount, freeText: false, cpmi: null, wajib: false,
+               keteranganOverride: isTransport ? `${c.label} ${meta.label} ${namaGabungan}` : `${c.label} ${meta.label}` };
+    }));
   } else {
     items = [{ label: meta.label, amount: meta.default, freeText: meta.freeText, cpmi: cpmiTerpilihList[0] || null, wajib: !!cpmiTerpilihList[0] }];
     items = items.concat(meta.companions.map(c => ({ label: c.label, amount: c.amount, freeText: false, cpmi: null, wajib: false })));
@@ -838,7 +892,7 @@ function tampilkanLineItems(key) {
     return `
     <div class="line-item-row">
       <div class="li-label">${labelText}</div>
-      <input type="number" inputmode="numeric" id="liAmount_${i}" value="${item.amount || ''}" placeholder="Nominal" />
+      <input type="text" inputmode="numeric" id="liAmount_${i}" value="${item.amount || ''}" placeholder="Nominal" />
     </div>
     ${textInput}`;
   }).join('');
@@ -847,6 +901,8 @@ function tampilkanLineItems(key) {
   }
   if (meta.noCost) {
     container.insertAdjacentHTML('beforeend', `<div style="font-size:10.5px; color:var(--muted); margin-top:-2px; margin-bottom:6px;">${meta.label} tidak dikenakan biaya -- nama CPMI dicatat otomatis di keterangan Transport &amp; Konsumsi.</div>`);
+  } else if (meta.multiCpmi && cpmiTerpilihList.length > 1) {
+    container.insertAdjacentHTML('beforeend', `<div style="font-size:10.5px; color:var(--muted); margin-top:-2px; margin-bottom:6px;">Lebih dari 1 orang di hari yang sama: Transport &amp; Konsumsi cukup 50.000 + 50.000 (sekali saja). Nominal CPMI ke-2/ke-3 boleh dikosongkan kalau biayanya ditanggung bersama -- namanya tetap tercatat.</div>`);
   }
   container.dataset.items = JSON.stringify(items.map(it => ({
     label: it.label, freeText: !!it.freeText, wajib: !!it.wajib, noreg: it.cpmi ? it.cpmi.noreg : '', nama: it.cpmi ? it.cpmi.nama : '',
@@ -862,7 +918,9 @@ function tampilkanLineItems(key) {
   document.getElementById('step3').style.display = 'block';
 }
 
+let sedangMenyimpan = false; // pengaman supaya tidak tersimpan dobel kalau tombol terpencet 2x
 async function simpanEntri() {
+  if (sedangMenyimpan) return; // sedang proses, abaikan klik berikutnya
   if (!jenisTransaksi || !kategoriKeyTerpilih) {
     alert('Lengkapi jenis transaksi dan kategori dulu.');
     return;
@@ -880,8 +938,8 @@ async function simpanEntri() {
   const belumTerisi = [];
   itemsMeta.forEach((item, i) => {
     if (!item.wajib) return;
-    const amount = Number(document.getElementById('liAmount_' + i).value);
-    if (!amount || amount <= 0) belumTerisi.push(item.nama || item.label);
+    const amount = parseNominal(document.getElementById('liAmount_' + i).value);
+    if (!Number.isFinite(amount) || amount <= 0) belumTerisi.push(item.nama || item.label);
   });
   if (belumTerisi.length) {
     alert('Nominal untuk ' + belumTerisi.join(', ') + ' belum diisi. Isi dulu supaya nama & No.Register-nya tercatat di laporan.');
@@ -890,8 +948,11 @@ async function simpanEntri() {
 
   const toSave = [];
   itemsMeta.forEach((item, i) => {
-    const amount = Number(document.getElementById('liAmount_' + i).value);
-    if (!amount || amount <= 0) return; // baris opsional (companion) yang tidak dipakai, aman dilewati
+    const amount = parseNominal(document.getElementById('liAmount_' + i).value);
+    // Lewati baris yang benar-benar kosong atau 0 (misal companion yang tidak dipakai, atau
+    // CPMI ke-2/ke-3 yang nominalnya dikosongkan). Nilai MINUS (defisit/saldo bulan lalu
+    // yang ditulis dalam kurung) TETAP disimpan.
+    if (!Number.isFinite(amount) || amount === 0) return;
     let label = item.label;
     if (item.freeText) {
       const teks = document.getElementById('liText_' + i).value.trim();
@@ -901,16 +962,25 @@ async function simpanEntri() {
     toSave.push({ label, amount, noreg: item.noreg, nama: item.nama, keteranganOverride: item.keteranganOverride });
   });
 
-  // Jejak tak terlihat untuk kategori gratis (Rekom ID dkk) -- nominal 0, tidak tampil di laporan/feed,
-  // hanya supaya sistem tahu CPMI ini sudah pernah diproses (untuk cek dobel-input di masa depan).
-  const hiddenItems = JSON.parse(document.getElementById('lineItemsContainer').dataset.hiddenItems || '[]');
-  hiddenItems.forEach(item => {
-    toSave.push({
-      label: item.label, amount: 0, noreg: item.noreg, nama: item.nama,
-      keteranganOverride: `${item.label} ${item.noreg} ${item.nama} (tercatat, tanpa biaya)`,
-      isTracking: true
+  // Pastikan setiap CPMI yang dipilih tetap tercatat walau nominalnya dikosongkan:
+  //  - kategori gratis (Rekom ID): semua CPMI (memang tidak ada biaya sendiri), atau
+  //  - CPMI ke-2/ke-3 pada Rekom ID / Paspor / OPP yang biayanya ditanggung bersama.
+  // Jejak ini bernominal 0, tidak tampil di feed/laporan uang, hanya supaya nama CPMI
+  // tetap terekam (anti dobel-input & agar namanya tetap "muncul" sebagai sudah diproses).
+  if (meta.noCost || meta.multiCpmi) {
+    const sudahAda = new Set(
+      toSave.filter(t => !t.isTracking).map(t => (t.noreg || '') + '|' + (t.nama || ''))
+    );
+    cpmiTerpilihList.forEach(c => {
+      const kunci = (c.noreg || '') + '|' + c.nama;
+      if (sudahAda.has(kunci)) return; // CPMI ini sudah punya entri berbiaya, tidak perlu jejak
+      toSave.push({
+        label: meta.label, amount: 0, noreg: c.noreg || '', nama: c.nama,
+        keteranganOverride: `${meta.label} ${c.noreg || ''} ${c.nama} (tercatat, tanpa biaya)`.replace(/\s+/g, ' ').trim(),
+        isTracking: true
+      });
     });
-  });
+  }
 
   if (!toSave.length) {
     alert('Isi minimal satu nominal yang benar.');
@@ -919,15 +989,28 @@ async function simpanEntri() {
 
   const today = document.getElementById('tanggalTransaksi').value || new Date().toISOString().slice(0, 10);
 
+  sedangMenyimpan = true;
+  showLoading('Menyimpan data...');
   document.getElementById('statusMsg').textContent = 'Menyimpan...';
   try {
     // Bangun semua record dulu, baru kirim SEMUANYA sekaligus (paralel) -- bukan satu per satu
     // bergantian. Ini yang membuat penyimpanan jadi jauh lebih cepat kalau ada beberapa baris
     // (misalnya kategori utama + Transport + Konsumsi otomatis).
     const records = toSave.map((item, i) => {
-      const keterangan = item.keteranganOverride
+      let keterangan = item.keteranganOverride
         ? item.keteranganOverride
         : (item.nama ? `${item.label.replace(` - ${item.nama}`, '')} ${item.noreg} ${item.nama}`.trim() : item.label);
+      // Nominal minus (defisit/saldo bulan lalu, ditulis dalam kurung) dipindah ke kolom
+      // lawannya supaya nilainya tetap benar mengurangi/menambah saldo dan tampil wajar:
+      //  - pemasukan (debet) yang minus  -> dicatat sebagai keluar (kredit) positif
+      //  - pengeluaran (kredit) yang minus -> dicatat sebagai masuk (debet) positif
+      const amt = Number(item.amount);
+      let debet = '', kredit = '';
+      if (meta.tipe === 'debet') {
+        if (amt >= 0) debet = String(amt); else { kredit = String(-amt); keterangan += ' (minus)'; }
+      } else {
+        if (amt >= 0) kredit = String(amt); else { debet = String(-amt); keterangan += ' (koreksi/minus)'; }
+      }
       return {
         id: 'fin_' + Date.now() + '_' + i,
         tanggal: today,
@@ -935,8 +1018,8 @@ async function simpanEntri() {
         noreg: item.noreg || '',
         nama: item.nama || '',
         kategori: kategoriKeyTerpilih,
-        debet: meta.tipe === 'debet' ? String(item.amount) : '',
-        kredit: meta.tipe === 'kredit' ? String(item.amount) : ''
+        debet,
+        kredit
       };
     });
 
@@ -956,6 +1039,9 @@ async function simpanEntri() {
     refreshFinanceList(); // sinkron ulang di latar belakang, tidak menahan tampilan
   } catch (e) {
     document.getElementById('statusMsg').textContent = 'Gagal menyimpan. Coba lagi.';
+  } finally {
+    hideLoading();
+    sedangMenyimpan = false;
   }
 }
 
@@ -1235,6 +1321,27 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
+}
+</script>
+
+<!-- Overlay loading (login / simpan) -->
+<div id="loadOverlay" aria-live="polite" aria-busy="true">
+  <div class="load-box">
+    <div class="ring"></div>
+    <div class="load-text" id="loadText">Memproses...</div>
+    <div class="load-sub">Mohon tunggu sebentar</div>
+  </div>
+</div>
+<script>
+// Tampilkan / sembunyikan logo loading. Dipakai saat login & menyimpan supaya
+// pengguna tahu prosesnya sedang berjalan (tidak perlu klik dua kali).
+function showLoading(teks) {
+  var el = document.getElementById('loadText');
+  if (el) el.textContent = teks || 'Memproses...';
+  document.getElementById('loadOverlay').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loadOverlay').classList.remove('show');
 }
 </script>
 </body>
