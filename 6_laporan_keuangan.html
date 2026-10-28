@@ -464,13 +464,14 @@ const CATEGORY_META = {
 
   KasPusat:     { label: 'Kas Pusat',           requiresCpmi: false, tipe: 'debet', default: null,   companions: [] },
   SaldoAwal:    { label: 'Saldo Awal Bulan',    requiresCpmi: false, tipe: 'debet', default: null,   companions: [] },
+  MinusBulanLalu:{ label: 'Minus Bulan Lalu',   requiresCpmi: false, tipe: 'kredit', default: null,  companions: [] },
   MundurDiri:   { label: 'Mengundurkan Diri',   requiresCpmi: true,  tipe: 'debet', default: 500000, companions: [] },
   LainnyaMasuk: { label: 'Lainnya',             requiresCpmi: false, tipe: 'debet', default: null,   companions: [], freeText: true },
 };
 
 const CPMI_CATEGORIES = ['MCU', 'MCUUlang', 'Paspor', 'RekomID', 'OPP', 'BPJS', 'HomeVisit', 'UJK'];
 const UMUM_CATEGORIES = ['Konsumsi', 'Transport', 'ATK', 'KirimBerkas', 'BackUp2Orang', 'LainnyaUmum'];
-const MASUK_CATEGORIES = ['KasPusat', 'SaldoAwal', 'MundurDiri', 'LainnyaMasuk'];
+const MASUK_CATEGORIES = ['KasPusat', 'SaldoAwal', 'MinusBulanLalu', 'MundurDiri', 'LainnyaMasuk'];
 
 function showMain() {
   document.getElementById('loginScreen').style.display = 'none';
@@ -903,6 +904,8 @@ function tampilkanLineItems(key) {
     container.insertAdjacentHTML('beforeend', `<div style="font-size:10.5px; color:var(--muted); margin-top:-2px; margin-bottom:6px;">${meta.label} tidak dikenakan biaya -- nama CPMI dicatat otomatis di keterangan Transport &amp; Konsumsi.</div>`);
   } else if (meta.multiCpmi && cpmiTerpilihList.length > 1) {
     container.insertAdjacentHTML('beforeend', `<div style="font-size:10.5px; color:var(--muted); margin-top:-2px; margin-bottom:6px;">Lebih dari 1 orang di hari yang sama: Transport &amp; Konsumsi cukup 50.000 + 50.000 (sekali saja). Nominal CPMI ke-2/ke-3 boleh dikosongkan kalau biayanya ditanggung bersama -- namanya tetap tercatat.</div>`);
+  } else if (key === 'MinusBulanLalu') {
+    container.insertAdjacentHTML('beforeend', `<div style="font-size:10.5px; color:var(--muted); margin-top:-2px; margin-bottom:6px;">Tulis jumlah kas yang minus/kurang dari bulan lalu sebagai angka biasa (tanpa tanda kurung). Nilainya otomatis mengurangi saldo bulan ini.</div>`);
   }
   container.dataset.items = JSON.stringify(items.map(it => ({
     label: it.label, freeText: !!it.freeText, wajib: !!it.wajib, noreg: it.cpmi ? it.cpmi.noreg : '', nama: it.cpmi ? it.cpmi.nama : '',
